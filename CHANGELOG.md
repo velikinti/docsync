@@ -120,6 +120,39 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.2.0] — 2026-08-24
+
+### Added
+
+**Archive on Delete (US-005)**
+- `archive_on_delete: bool = Field(default=True)` in `DocSyncConfig` — controls whether Confluence pages are archived when their source `.md` files are deleted; default `true` preserves existing behavior; set to `false` for a soft opt-out
+- `SyncEngine._handle_delete` now enforces `archive_on_delete` flag: returns `SyncStatus.SKIPPED` with `log.debug("archive_on_delete_disabled")` when disabled
+- `SyncEngine._handle_delete` emits `log.warning("page_not_found_for_delete")` + `SyncStatus.SKIPPED` (was a silent skip) when the source path has no matching Confluence page — improves operator visibility
+- `SyncEngine._process_file` handles `ChangeType.RENAMED`: archives `previous_path` (if a Confluence page exists for it) then upserts the new path in a single sync run
+- Archive failure for RENAMED `previous_path` is isolated in a `try/except`; a `log.warning("rename_archive_failed")` is emitted but the upsert of the new path always proceeds (DD-TC005-03)
+
+### Architecture
+
+- **DD-TC005-01**: `archive_on_delete` defaults to `true` — backward-compatible with all existing `.docsync.yml` files
+- **DD-TC005-02**: RENAMED events produce a single `SyncResult` for the new path's upsert; archive of `previous_path` is logged only (not in SyncReport) — `_process_file` single-return contract preserved
+- **DD-TC005-03**: RENAMED archive wrapped in isolated `try/except` — prevents archive failure from blocking upsert and from misattributing the error to the new path
+- **DD-TC005-04**: `_handle_delete` continues to call `find_page_by_property()` directly (bypasses HierarchyManager prefetch cache) — pre-existing gap, not worsened; follow-on ticket for `HierarchyManager.lookup_page_id()`
+- **DD-TC005-05**: Glob filters applied to new path only for RENAMED events — cross-glob rename edge case deferred
+
+### Tests (+12 new)
+
+- `tests/test_config.py::TestArchiveOnDeleteConfig` — 4 tests: field default, explicit values, backward compat
+- `tests/test_sync_delete.py` (new) — 8 tests: `archive_on_delete` flag skip + debug log, page-not-found warning, RENAMED archive + upsert, archive failure isolation, dry-run + RENAMED, no-previous-path guard
+
+### Known Limitations (v1.2)
+
+- **CR-01**: Successful RENAMED archive is not logged (`log.info("rename_archived_previous")` missing — RISK-03 mitigation incomplete); failure is logged
+- **CR-02**: FR-10 directory-type archive path (`sync.py:469-477`) has no sync-level test; covered at unit level via `test_hierarchy.py::TestArchiveDirectory`
+- **RISK-02**: `_handle_delete` bypasses HierarchyManager prefetch cache for page lookup; pre-existing gap, deferred to follow-on (`HierarchyManager.lookup_page_id()`)
+- **RISK-05**: RENAMED files where old path matches `include_globs` but new path does not will leave a stale Confluence page unarchived
+
+---
+
 ## [Unreleased]
 
 ### Planned for v2

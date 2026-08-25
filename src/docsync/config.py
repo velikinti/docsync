@@ -22,6 +22,7 @@ class DocSyncConfig(BaseModel):
     exclude_globs: List[str] = Field(default=[], description="Glob patterns to exclude")
     batch_size: int = Field(default=10, ge=1, le=50, description="Concurrent GitHub API fetch limit")
     dry_run: bool = Field(default=False, description="Preview mode — no writes to Confluence")
+    archive_on_delete: bool = Field(default=True, description="Archive Confluence pages when source files are deleted")
 
     @field_validator("confluence_base_url")
     @classmethod

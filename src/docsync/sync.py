@@ -335,6 +335,16 @@ class SyncEngine:
             if changed.change_type == ChangeType.DELETED:
                 return await self._handle_delete(path, space_key, hierarchy)
 
+            if changed.change_type == ChangeType.RENAMED and changed.previous_path:
+                try:
+                    await self._handle_delete(changed.previous_path, space_key, hierarchy)
+                except Exception as exc:
+                    log.warning(
+                        "rename_archive_failed",
+                        previous_path=changed.previous_path,
+                        error=str(exc),
+                    )
+
             raw = contents.get(path)
             if raw is None:
                 return SyncResult(
@@ -430,6 +440,13 @@ class SyncEngine:
         if self._cfg.dry_run:
             return SyncResult(
                 path=path, status=SyncStatus.SKIPPED, space_key=space_key, error="dry-run"
+            )
+
+        if not self._cfg.archive_on_delete:
+            log.debug("archive_on_delete_disabled", path=path)
+            return SyncResult(
+                path=path, status=SyncStatus.SKIPPED,
+                space_key=space_key, error="archive_on_delete=false",
             )
 
         # Find the page by source_path property (DD-01)
