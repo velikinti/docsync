@@ -1,0 +1,30 @@
+# .docsync.yml.example — copy to .docsync.yml and fill in your values
+
+# ----- Multi-space configuration (US-002) -----
+confluence_base_url: https://myorg.atlassian.net
+
+# Option A: explicit list of space keys
+space_keys:
+  - DOCS
+  - ENG
+
+# Folder-prefix to space-key routing (longest prefix wins)
+space_mappings:
+  docs/: DOCS
+  engineering/: ENG
+  api/: DOCS
+
+root_page_id: "123456"
+
+docs_root: docs
+include_globs:
+  - "**/*.md"
+exclude_globs:
+  - "docs/drafts/**"
+batch_size: 10
+dry_run: false
+
+# ----- Legacy single-space configuration (US-001, still valid) -----
+# confluence_base_url: https://myorg.atlassian.net
+# space_key: DOCS
+# root_page_id: "123456"
