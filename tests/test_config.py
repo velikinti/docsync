@@ -132,3 +132,34 @@ class TestResolveActiveSpaces:
             root_page_id="111",
         )
         assert cfg.resolve_active_spaces(cli_override=["DOCS", "ENG"]) == ["DOCS", "ENG"]
+
+
+class TestArchiveOnDeleteConfig:
+    def test_archive_on_delete_defaults_to_true(self):
+        cfg = DocSyncConfig(
+            confluence_base_url="https://test.atlassian.net",
+            space_key="TEST",
+            root_page_id="111",
+        )
+        assert cfg.archive_on_delete is True
+
+    def test_archive_on_delete_false_accepted(self):
+        cfg = DocSyncConfig(
+            confluence_base_url="https://test.atlassian.net",
+            space_key="TEST",
+            root_page_id="111",
+            archive_on_delete=False,
+        )
+        assert cfg.archive_on_delete is False
+
+    def test_archive_on_delete_true_explicit(self):
+        cfg = DocSyncConfig(
+            confluence_base_url="https://test.atlassian.net",
+            space_key="TEST",
+            root_page_id="111",
+            archive_on_delete=True,
+        )
+        assert cfg.archive_on_delete is True
+
+    def test_base_config_fixture_has_archive_on_delete_true(self, base_config):
+        assert base_config.archive_on_delete is True
