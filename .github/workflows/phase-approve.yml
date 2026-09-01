@@ -1,0 +1,139 @@
+name: DocSync Phase Approval
+
+on:
+  workflow_dispatch:
+    inputs:
+      tc_id:
+        description: 'Test Case ID (e.g. TC-005)'
+        required: true
+        type: string
+      phase:
+        description: 'Phase number to approve or reject'
+        required: true
+        type: choice
+        options:
+          - '1'
+          - '2'
+          - '3'
+          - '4'
+          - '5'
+          - '6'
+          - '7'
+          - '8'
+      decision:
+        description: 'Approval decision'
+        required: true
+        type: choice
+        options:
+          - APPROVED
+          - REJECTED
+      reason:
+        description: 'Reason (required when decision is REJECTED)'
+        required: false
+        type: string
+
+jobs:
+  record-approval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Validate rejection includes a reason
+        if: inputs.decision == 'REJECTED' && inputs.reason == ''
+        run: |
+          echo "::error::A reason is required when rejecting a phase. Re-run with a value in the 'reason' input."
+          exit 1
+
+      - name: Validate phase-status.json exists
+        shell: pwsh
+        run: |
+          $statusFile = "outputs/${{ inputs.tc_id }}/phase-status.json"
+          if (-not (Test-Path $statusFile)) {
+            Write-Error "Phase status file not found: $statusFile — has the pipeline been initialised for ${{ inputs.tc_id }}?"
+            exit 1
+          }
+
+      - name: Record approval decision
+        shell: pwsh
+        run: |
+          $params = @{
+            TestCase = "${{ inputs.tc_id }}"
+            Phase    = [int]"${{ inputs.phase }}"
+            Decision = "${{ inputs.decision }}"
+          }
+          if ("${{ inputs.reason }}") {
+            $params.Reason = "${{ inputs.reason }}"
+          }
+          scripts/approve-phase.ps1 @params
+
+      - name: Write job summary
+        shell: pwsh
+        run: |
+          $phase    = "${{ inputs.phase }}"
+          $decision = "${{ inputs.decision }}"
+          $tcId     = "${{ inputs.tc_id }}"
+          $reason   = "${{ inputs.reason }}"
+
+          $phaseNames = @{
+            "1"="Requirements"; "2"="Architecture"; "3"="Design Review";
+            "4"="Impl Planning"; "5"="Implementation"; "6"="Code Review";
+            "7"="Verification"; "8"="PR Creation"
+          }
+          $phaseName = $phaseNames[$phase]
+          $icon      = if ($decision -eq "APPROVED") { "✅" } else { "❌" }
+
+          $summary = @"
+          ## $icon Phase $phase — $phaseName : $decision
+
+          | Field    | Value |
+          |----------|-------|
+          | TC       | $tcId |
+          | Phase    | $phase — $phaseName |
+          | Decision | $decision |
+          $(if ($reason) { "| Reason   | $reason |" })
+          "@
+
+          $summary | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8
+
+      - name: Commit approval record
+        run: |
+          git config user.name  "DocSync Pipeline Bot"
+          git config user.email "docsync-pipeline[bot]@users.noreply.github.com"
+          git add outputs/
+          if git diff --staged --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "ci(approval): ${{ inputs.decision }} phase ${{ inputs.phase }} for ${{ inputs.tc_id }} [skip ci]
+
+          TC:       ${{ inputs.tc_id }}
+          Phase:    ${{ inputs.phase }}
+          Decision: ${{ inputs.decision }}
+          Reason:   ${{ inputs.reason }}
+          Source:   Copilot Studio / workflow_dispatch"
+            git push
+          fi
+
+      - name: Trigger next phase (on APPROVED, full pipeline mode)
+        # Auto-advances to the next phase when approved inside a full-pipeline run.
+        # Only fires if the secret PIPELINE_AUTO_ADVANCE is set to "true".
+        if: inputs.decision == 'APPROVED' && vars.PIPELINE_AUTO_ADVANCE == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          NEXT=$(( ${{ inputs.phase }} + 1 ))
+          if [ "$NEXT" -le 8 ]; then
+            echo "Auto-advancing to phase $NEXT for ${{ inputs.tc_id }}"
+            gh workflow run pipeline-trigger.yml \
+              --ref "${{ github.ref_name }}" \
+              -f tc_id="${{ inputs.tc_id }}" \
+              -f phase="$NEXT"
+          else
+            echo "Phase 8 approved — pipeline complete for ${{ inputs.tc_id }}"
+          fi

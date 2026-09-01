@@ -1,0 +1,134 @@
+name: DocSync Pipeline Trigger
+
+on:
+  workflow_dispatch:
+    inputs:
+      tc_id:
+        description: 'Test Case ID (e.g. TC-005)'
+        required: true
+        type: string
+      phase:
+        description: 'Phase to run — "full" for all 8, or a single phase number'
+        required: true
+        default: 'full'
+        type: choice
+        options:
+          - full
+          - '1'
+          - '2'
+          - '3'
+          - '4'
+          - '5'
+          - '6'
+          - '7'
+          - '8'
+      user_story:
+        description: 'User story text (required for "full" or phase 1)'
+        required: false
+        type: string
+      from_phase:
+        description: 'Resume full pipeline from this phase number (optional)'
+        required: false
+        type: string
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Setup Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Python dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Initialize pipeline directory
+        # Only runs for full-pipeline or phase 1 kicks — creates outputs/TC-XXX/ scaffold
+        if: inputs.phase == 'full' || inputs.phase == '1'
+        shell: pwsh
+        run: |
+          $params = @{
+            TestCase = "${{ inputs.tc_id }}"
+            Force    = $true
+          }
+          if ("${{ inputs.user_story }}") {
+            $params.UserStory = "${{ inputs.user_story }}"
+          }
+          if ("${{ inputs.from_phase }}") {
+            $params.FromPhase = [int]"${{ inputs.from_phase }}"
+          }
+          scripts/init-pipeline.ps1 @params
+
+      - name: Build Claude slash command
+        id: build-cmd
+        shell: bash
+        run: |
+          TC="${{ inputs.tc_id }}"
+          PHASE="${{ inputs.phase }}"
+          STORY="${{ inputs.user_story }}"
+          FROM="${{ inputs.from_phase }}"
+
+          # Map phase number → slash-command name
+          declare -A PHASE_CMDS=(
+            [1]="requirements"
+            [2]="architecture"
+            [3]="design-review"
+            [4]="impl-planning"
+            [5]="implementation"
+            [6]="code-review"
+            [7]="verification"
+            [8]="pr"
+          )
+
+          if [ "$PHASE" = "full" ]; then
+            CMD="/pipeline $TC"
+            [ -n "$STORY" ] && CMD="$CMD \"$STORY\""
+            [ -n "$FROM"  ] && CMD="$CMD --from $FROM"
+          else
+            CMD="/${PHASE_CMDS[$PHASE]} $TC"
+          fi
+
+          echo "cmd=$CMD" >> "$GITHUB_OUTPUT"
+          echo "Claude command: $CMD"
+
+      - name: Run Claude Code pipeline
+        env:
+          ANTHROPIC_API_KEY:    ${{ secrets.ANTHROPIC_API_KEY }}
+          CONFLUENCE_API_TOKEN: ${{ secrets.CONFLUENCE_API_TOKEN }}
+          CONFLUENCE_USER:      ${{ secrets.CONFLUENCE_USER }}
+          GITHUB_TOKEN:         ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          claude --print --dangerously-skip-permissions "${{ steps.build-cmd.outputs.cmd }}"
+
+      - name: Commit phase outputs
+        run: |
+          git config user.name  "DocSync Pipeline Bot"
+          git config user.email "docsync-pipeline[bot]@users.noreply.github.com"
+          git add outputs/ docs/ src/ || true
+          if git diff --staged --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "ci(pipeline): run phase(s) for ${{ inputs.tc_id }} [skip ci]
+
+          TC:      ${{ inputs.tc_id }}
+          Phase:   ${{ inputs.phase }}
+          Source:  Copilot Studio / workflow_dispatch"
+            git push
+          fi
